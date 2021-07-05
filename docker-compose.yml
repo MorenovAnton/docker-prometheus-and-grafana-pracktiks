@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:1.20.1-alpine
+    container_name: nginx
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./nginx:/etc/nginx/conf.d
+    restart: unless-stopped
+    # определяем порядок запуска контейнеров
+    depends_on:
+     - prometheus
+     - grafana
+
+  prometheus:
+    image: prom/prometheus:v2.26.0
+    container_name: prometheus
+    # При использовании data volumes файлы хранятся в директориях хоста. НЕ контейнера
+    volumes:
+    # https://stackoverflow.com/questions/51416182/error-named-volume-xplore-root-xplore-rtdatarw-is-used-in-service-dsearch
+      - ./prometheus:/etc/prometheus
+      #- ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      #- ./prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml
+      - prometheus_data:/prometheus
+    # https://clck.ru/VLWJP
+    # https://github.com/stefanprodan/dockprom/blob/master/docker-compose.yml
+    # задаем параметры командной строки
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    # expose - Открывайте порты, не публикуя их на главном компьютере - они будут доступны только для связанных служб.
+    # Можно указать только внутренний порт.
+    expose:
+      - 9090
+    ports:
+      - 9090:9090
+    # политики перезапуска контейнера: «Без остановки» перезапускает контейнер только тогда,
+    # когда какой-либо пользователь выполняет команду для остановки контейнера, а не в случае сбоя
+    restart: unless-stopped
+    # определяем порядок запуска контейнеров, node_exporter запуститься ДО prometheus
+    depends_on:
+      - node_exporter
+
+  node_exporter:
+    image: prom/node-exporter:v1.1.2
+    container_name: node_exporter
+    volumes:
+      # Тип монтирования
+      - type: "bind"
+        # Источник крепления. Для монтирования-это путь к файлу или каталогу на хосте демона Docker
+        source: "/"
+        target: "/rootfs"
+        read_only: true
+    command:
+      - '--path.rootfs=/rootfs'
+        # игнорируем каталоги для мониторинга
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host)($$|/)'
+        # Если установлено значение «host», режим PID службы является режимом PID хоста.
+        # Это включает совместное использование контейнером и операционной системой хоста адресного
+        # пространства PID. Контейнеры, запущенные с этим флагом, могут получать доступ и
+        # управлять другими контейнерами в пространстве имен машины без операционной системы и наоборот.
+    pid: "host"
+    # связываем сеть контейнера с хост-сетью (сетью виртуальной машины)
+    network_mode: host
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:7.5.5
+    container_name: grafana
+    environment: # добавляем переменных среды
+      GF_RENDERING_SERVER_URL: http://image-renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_LOG_FILTERS: rendering:debug
+    volumes:
+      - ./config/grafana.ini:/etc/grafana/grafana.ini
+      - grafana_data:/var/lib/grafana
+    #entrypoint: chmod 755 ./setup.sh && /setup.sh
+    expose:
+      - 3000
+    restart: unless-stopped
+    depends_on:
+      - image-renderer
+  
+  image-renderer:
+    image: grafana/grafana-image-renderer:latest
+    container_name: image-renderer
+    ports:
+      - 8081
+    environment:
+      ENABLE_METRICS: 'true'
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data: 
+
+
+
+
+
+
+
+
+
+
